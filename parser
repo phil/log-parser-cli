@@ -1,0 +1,186 @@
+#! /usr/bin/env ruby
+require 'optparse'
+
+class ParserOptions
+  def self.parse argv
+    Hash.new.tap do |options|
+      OptionParser.new do |opts|
+        opts.banner = "Usage: parser.rb [FILENAME]"
+
+        opts.on("-t", "--test", "Runs the test suite") do
+          options[:mode] = :test
+        end
+
+        opts.on("--by-path", "Group by path") do 
+          options[:mode] = :by_path
+        end
+
+        opts.on("--by-ip", "Group by IP") do 
+          options[:mode] = :by_ip
+        end
+
+        opts.on("--unique-by-path", "Show the number of unique views by path") do
+          options[:mode] = :unique_by_path
+        end
+
+        opts.on("-h", "--help", "Prints this help") do
+          puts opts
+          exit
+        end
+
+        opts.on("-v", "--verbose", "Runs debugging output") do
+          options[:verbose] = true
+        end
+
+      end.parse!
+
+      options[:filename] = ARGV.first
+
+      puts "Running with option: #{options.inspect}" if options[:verbose]
+    end
+  end
+end
+
+
+class Parser
+
+  attr_reader :options
+
+  def initialize options
+    @options = options
+  end
+
+  def run
+    verbose "Running ..."
+
+    case options[:mode]
+    when :by_path
+      verbose "Grouped by Path:"
+      render grouped_by_path
+    when :by_ip
+      verbose "Grouped by IP:"
+      render grouped_by_ip
+    when :unique_by_path
+      verbose "Unique Views by path"
+      render unique_by_path
+    end
+
+    verbose "Completed"
+  end
+
+  def grouped_by_path
+    data.group_by {|x| x[:path] }.map{ |k,v| [k, v.count] }.sort{ |a,b| [b.last, a.first] <=> [a.last, b.first] }
+  end
+
+  def grouped_by_ip
+    data.group_by {|x| x[:ip] }.map{ |k,v| [k, v.count] }.sort{ |a,b| [b.last, a.first] <=> [a.last, b.first] }
+  end 
+
+  def unique_by_path
+    data.group_by {|x| x[:path] }.map{ |k,v| [k, v.map { |x| x[:ip] }.uniq.count]  }
+  end
+
+  def render stats
+    stats.each do |stat|
+      puts "#{stat.last.to_s.rjust(5)} #{stat.first}"
+    end
+  end
+
+  def verbose text
+    if options[:verbose]
+      puts text
+    end
+  end
+
+  def data
+    @data ||= File.readlines(options[:filename]).map do |line|
+      parts = line.split(" ")
+      {path: parts[0], ip: parts[1]}
+    end
+  end
+
+end
+
+
+require "minitest"
+require "minitest/spec"
+require "minitest/mock"
+
+class ParserTest < Minitest::Test
+
+  def setup
+  end
+
+  def test_group_by_path
+    with_stubbed_data do
+      assert_equal([
+        ["/alpha/1", 3],
+        ["/delta", 3],
+        ["/beta", 2],
+        ["/gamma/3", 2],
+        ["/gamma/1", 1],
+        ["/gamma/2", 1]
+      ], Parser.new({}).grouped_by_path)
+    end
+  end
+
+  def test_grouped_by_ip
+    with_stubbed_data do
+      assert_equal([
+        ["4.4.4.4", 3],
+        ["1.1.1.1", 2],
+        ["3.3.3.3", 2],
+        ["1.1.1.2", 1],
+        ["2.2.2.2", 1], 
+        ["2.2.2.3", 1], 
+        ["3.3.3.1", 1], 
+        ["3.3.3.2", 1]
+      ], Parser.new({}).grouped_by_ip)
+    end
+  end
+
+  # Test is failing to demonstrate errors in output
+  def test_unique_by_path
+    with_stubbed_data do
+      assert_equal([
+        ["/delta", 3],
+        ["/alpha/1", 2],
+        ["/beta", 2],
+        ["/gamma/3", 2],
+        ["/gamma/1", 1],
+        ["/gamma/2", 1]
+], Parser.new({}).unique_by_path)
+    end
+  end
+
+  def with_stubbed_data &block
+    # DATA.rewind
+    File.stub(:readlines, $test_data.dup) do 
+      block.yield
+    end
+  end
+
+end
+
+options = ParserOptions.parse(ARGV)
+if options[:mode] == :test
+  $test_data = DATA.readlines
+  Minitest.run ["--verbose"]
+else
+  Parser.new(options).run
+end
+
+
+__END__
+/alpha/1 1.1.1.1
+/alpha/1 1.1.1.1
+/alpha/1 1.1.1.2
+/beta 2.2.2.2
+/beta 2.2.2.3
+/gamma/1 3.3.3.1
+/gamma/2 3.3.3.2
+/gamma/3 3.3.3.3
+/gamma/3 3.3.3.3
+/delta 4.4.4.4
+/delta 4.4.4.4
+/delta 4.4.4.4
